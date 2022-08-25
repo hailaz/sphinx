@@ -543,7 +543,7 @@ func (sc *Client) SetFilterFloatRange(attr string, fmin, fmax float32, exclude b
 		return sc
 	}
 	if fmin > fmax {
-		sc.err = fmt.Errorf("SetFilterFloatRange > min > max! fmin:%d  fmax:%d", fmin, fmax)
+		sc.err = fmt.Errorf("SetFilterFloatRange > min > max! fmin:%v  fmax:%v", fmin, fmax)
 		return sc
 	}
 
@@ -1219,7 +1219,7 @@ func (sc *Client) connect() (err error) {
 			return fmt.Errorf("connect() net.DialTimeout(%d ms) > %v", sc.Timeout, err)
 		}
 	} else {
-		return fmt.Errorf("connect() > No valid socket or port!\n%Client: #v", sc)
+		return fmt.Errorf("connect() > No valid socket or port!\nClient: %#v", sc)
 	}
 
 	// Set deadline
@@ -1333,7 +1333,7 @@ func (sc *Client) doRequest(command int, version int, req []byte) (res []byte, e
 		// do nothing
 	case SEARCHD_WARNING:
 		wlen := binary.BigEndian.Uint32(res[0:4])
-		sc.warning = string(res[4:4+wlen])
+		sc.warning = string(res[4 : 4+wlen])
 		res = res[4+wlen:]
 	case SEARCHD_ERROR, SEARCHD_RETRY:
 		wlen := binary.BigEndian.Uint32(res[0:4])
@@ -1383,10 +1383,9 @@ func DegreeToRadian(degree float32) float32 {
 	return degree * math.Pi / 180
 }
 
-
 type byteParser struct {
 	stream []byte
-	p int
+	p      int
 }
 
 func (bp *byteParser) Int32() (i int) {
@@ -1408,7 +1407,7 @@ func (bp *byteParser) Uint64() (i uint64) {
 }
 
 func (bp *byteParser) Float32() (f float32, err error) {
-	buf := bytes.NewBuffer(bp.stream[bp.p : bp.p + 4])
+	buf := bytes.NewBuffer(bp.stream[bp.p : bp.p+4])
 	bp.p += 4
 	if err := binary.Read(buf, binary.BigEndian, &f); err != nil {
 		return 0, err
