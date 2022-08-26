@@ -14,14 +14,14 @@ import (
 	"time"
 )
 
-/* searchd command versions */
+/* searchd command versions for 3.x */
 const (
 	VER_MAJOR_PROTO        = 0x1
-	VER_COMMAND_SEARCH     = 0x119 // 0x11D for 2.1
+	VER_COMMAND_SEARCH     = 0x120
 	VER_COMMAND_EXCERPT    = 0x104
-	VER_COMMAND_UPDATE     = 0x102 // 0x103 for 2.1
+	VER_COMMAND_UPDATE     = 0x103
 	VER_COMMAND_KEYWORDS   = 0x100
-	VER_COMMAND_STATUS     = 0x100
+	VER_COMMAND_STATUS     = 0x101
 	VER_COMMAND_FLUSHATTRS = 0x100
 )
 
@@ -129,9 +129,9 @@ type override struct {
 }
 
 type Match struct {
-	DocId      uint64        // Matched document ID.
-	Weight     int           // Matched document weight.
-	AttrValues []interface{} // Matched document attribute values.
+	DocId      uint64                   // Matched document ID.
+	Weight     int                      // Matched document weight.
+	AttrValues []map[string]interface{} // Matched document attribute values.
 }
 
 type WordInfo struct {
@@ -156,35 +156,44 @@ type Result struct {
 }
 
 type Options struct {
-	Host          string
-	Port          int
-	Socket        string // Unix socket
-	SqlPort       int
-	SqlSocket     string
-	RetryCount    int
-	RetryDelay    int
-	Timeout       int
-	Offset        int // how many records to seek from result-set start
-	Limit         int // how many records to return from result-set starting at offset (default is 20)
-	MaxMatches    int // max matches to retrieve
-	Cutoff        int // cutoff to stop searching at
-	MaxQueryTime  int
-	Select        string // select-list (attributes or expressions, with optional aliases)
-	MatchMode     int    // query matching mode (default is SPH_MATCH_ALL)
-	RankMode      int
-	RankExpr      string // ranking expression for SPH_RANK_EXPR
-	SortMode      int    // match sorting mode (default is SPH_SORT_RELEVANCE)
-	SortBy        string // attribute to sort by (defualt is "")
-	MinId         uint64 // min ID to match (default is 0, which means no limit)
-	MaxId         uint64 // max ID to match (default is 0, which means no limit)
-	LatitudeAttr  string
-	LongitudeAttr string
-	Latitude      float32
-	Longitude     float32
-	GroupBy       string // group-by attribute name
-	GroupFunc     int    // group-by function (to pre-process group-by attribute value with)
-	GroupSort     string // group-by sorting clause (to sort groups in result set with)
-	GroupDistinct string // group-by count-distinct attribute
+	Host               string
+	Port               int
+	Socket             string // Unix socket
+	SqlPort            int
+	SqlSocket          string
+	RetryCount         int
+	RetryDelay         int
+	QueryFlags         int
+	Timeout            int
+	Offset             int // how many records to seek from result-set start
+	Limit              int // how many records to return from result-set starting at offset (default is 20)
+	MaxMatches         int // max matches to retrieve
+	Cutoff             int // cutoff to stop searching at
+	PredictedTime      int
+	MaxQueryTime       int
+	Select             string // select-list (attributes or expressions, with optional aliases)
+	MatchMode          int    // query matching mode (default is SPH_MATCH_ALL)
+	RankMode           int
+	RankExpr           string // ranking expression for SPH_RANK_EXPR
+	SortMode           int    // match sorting mode (default is SPH_SORT_RELEVANCE)
+	SortBy             string // attribute to sort by (defualt is "")
+	MinId              uint64 // min ID to match (default is 0, which means no limit)
+	MaxId              uint64 // max ID to match (default is 0, which means no limit)
+	LatitudeAttr       string
+	LongitudeAttr      string
+	Latitude           float32
+	Longitude          float32
+	GroupBy            string // group-by attribute name
+	GroupFunc          int    // group-by function (to pre-process group-by attribute value with)
+	GroupSort          string // group-by sorting clause (to sort groups in result set with)
+	GroupDistinct      string // group-by count-distinct attribute
+	OuterOrderBy       string
+	OuterOffset        int
+	OuterLimit         int
+	HasOuter           bool
+	TokenFilterLibrary string
+	TokenFilterName    string
+	TokenFilterOpts    string
 
 	// for sphinxql
 	Index   string // index name for sphinxql query.
@@ -219,6 +228,7 @@ var DefaultOptions = &Options{
 	Port:       9312,
 	SqlPort:    9306,
 	Limit:      20,
+	QueryFlags: SetBit(0, 6, true),
 	MatchMode:  SPH_MATCH_EXTENDED, // "When you use one of the legacy modes, Sphinx internally converts the query to the appropriate new syntax and chooses the appropriate ranker."
 	SortMode:   SPH_SORT_RELEVANCE,
 	GroupFunc:  SPH_GROUPBY_DAY,
@@ -307,6 +317,31 @@ func (sc *Client) SetSqlServer(host string, sqlport int) *Client {
 	}
 
 	return sc
+}
+
+var queryFlagNameList = []string{"reverse_scan", "sort_method", "max_predicted_time", "boolean_simplify", "idf", "global_idf", "idf6"}
+
+// SetQueryFlag description
+//
+// createTime: 2022-08-26 12:30:45
+//
+// author: hailaz
+func (sc *Client) SetQueryFlag(name string, set bool) {
+	for i := 0; i < len(queryFlagNameList); i++ {
+		if name == queryFlagNameList[i] {
+			sc.QueryFlags = SetBit(sc.QueryFlags, i, set)
+		}
+	}
+}
+
+// ResetQueryFlag description
+//
+// createTime: 2022-08-26 12:36:29
+//
+// author: hailaz
+func (sc *Client) ResetQueryFlag() {
+	sc.QueryFlags = SetBit(0, 6, true)
+	sc.PredictedTime = 0
 }
 
 func (sc *Client) SetRetries(count, delay int) *Client {
@@ -630,7 +665,7 @@ func (sc *Client) Query(query, index, comment string) (result *Result, err error
 
 func (sc *Client) AddQuery(query, index, comment string) (i int, err error) {
 	var req []byte
-
+	req = writeInt32ToBytes(req, sc.QueryFlags)
 	req = writeInt32ToBytes(req, sc.Offset)
 	req = writeInt32ToBytes(req, sc.Limit)
 	req = writeInt32ToBytes(req, sc.MatchMode)
@@ -740,6 +775,24 @@ func (sc *Client) AddQuery(query, index, comment string) (i int, err error) {
 
 	// select-list
 	req = writeLenStrToBytes(req, sc.Select)
+	if sc.PredictedTime > 0 {
+		req = writeInt32ToBytes(req, sc.PredictedTime)
+	}
+
+	// outer
+	req = writeLenStrToBytes(req, sc.OuterOrderBy)
+	req = writeInt32ToBytes(req, sc.OuterOffset)
+	req = writeInt32ToBytes(req, sc.OuterLimit)
+	if sc.HasOuter {
+		req = writeInt32ToBytes(req, 1)
+	} else {
+		req = writeInt32ToBytes(req, 0)
+	}
+
+	// token_filter
+	req = writeLenStrToBytes(req, sc.TokenFilterLibrary)
+	req = writeLenStrToBytes(req, sc.TokenFilterName)
+	req = writeLenStrToBytes(req, sc.TokenFilterOpts)
 
 	// send query, get response
 	sc.reqs = append(sc.reqs, req)
@@ -812,28 +865,31 @@ func (sc *Client) RunQueries() (results []Result, err error) {
 			}
 			match.Weight = bp.Int32()
 
-			match.AttrValues = make([]interface{}, nattrs)
+			match.AttrValues = make([]map[string]interface{}, nattrs)
 
 			for attrNum := 0; attrNum < len(result.AttrTypes); attrNum++ {
+				attrName := result.AttrNames[attrNum]
 				attrType := result.AttrTypes[attrNum]
+				var attrValue interface{}
+				match.AttrValues[attrNum] = make(map[string]interface{})
 				switch attrType {
 				case SPH_ATTR_BIGINT:
-					match.AttrValues[attrNum] = bp.Uint64()
+					attrValue = bp.Uint64()
 				case SPH_ATTR_FLOAT:
 					f, err := bp.Float32()
 					if err != nil {
 						return nil, fmt.Errorf("binary.Read error: %v", err)
 					}
-					match.AttrValues[attrNum] = f
+					attrValue = f
 				case SPH_ATTR_STRING:
-					match.AttrValues[attrNum] = bp.String()
+					attrValue = bp.String()
 				case SPH_ATTR_MULTI: // SPH_ATTR_MULTI is 2^30+1, not an int value.
 					nvals := bp.Int32()
 					var vals = make([]uint32, nvals)
 					for valNum := 0; valNum < nvals; valNum++ {
 						vals[valNum] = bp.Uint32()
 					}
-					match.AttrValues[attrNum] = vals
+					attrValue = vals
 				case SPH_ATTR_MULTI64:
 					nvals := bp.Int32()
 					nvals = nvals / 2
@@ -842,10 +898,11 @@ func (sc *Client) RunQueries() (results []Result, err error) {
 						vals[valNum] = uint64(bp.Uint32())
 						bp.Uint32()
 					}
-					match.AttrValues[attrNum] = vals
+					attrValue = vals
 				default: // handle everything else as unsigned ints
-					match.AttrValues[attrNum] = bp.Uint32()
+					attrValue = bp.Uint32()
 				}
+				match.AttrValues[attrNum][attrName] = attrValue
 			}
 			result.Matches[matchesNum] = match
 		}
@@ -1422,4 +1479,16 @@ func (bp *byteParser) String() (s string) {
 		bp.p += slen
 	}
 	return
+}
+
+// SetBit description
+//
+// createTime: 2022-08-26 12:20:48
+//
+// author: hailaz
+func SetBit(in int, bit int, on bool) int {
+	if on {
+		return in | (1 << bit)
+	}
+	return in &^ (1 << bit)
 }
